@@ -1,7 +1,7 @@
 # sdb
 The Slick/Simple Debugger
 
-[![Build Status](https://travis-ci.org/delphix/sdb.svg?branch=master)](https://travis-ci.org/delphix/sdb)
+![](https://github.com/delphix/sdb/workflows/.github/workflows/main.yml/badge.svg)
 
 ### Installation
 
@@ -11,7 +11,7 @@ Ensure you have the following dependencies:
 
 Then run:
 ```
-$ git clone https://github.com/sdimitro/sdb.git
+$ git clone https://github.com/delphix/sdb.git
 $ cd sdb
 $ sudo python3 setup.py install
 ```

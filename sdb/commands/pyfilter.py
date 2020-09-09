@@ -17,20 +17,26 @@
 # pylint: disable=missing-docstring
 
 import argparse
-from typing import Iterable
+from typing import Iterable, List, Optional
 
 import drgn
 import sdb
 
 
 class PyFilter(sdb.Command):
-    # pylint: disable=too-few-public-methods
 
     names = ["pyfilter"]
 
-    def __init__(self, prog: drgn.Program, args: str = "",
+    @classmethod
+    def _init_parser(cls, name: str) -> argparse.ArgumentParser:
+        parser = super()._init_parser(name)
+        parser.add_argument("expr", nargs=argparse.REMAINDER)
+        return parser
+
+    def __init__(self,
+                 args: Optional[List[str]] = None,
                  name: str = "_") -> None:
-        super().__init__(prog, args, name)
+        super().__init__(args, name)
         if not self.args.expr:
             self.parser.error("the following arguments are required: expr")
 
@@ -39,11 +45,7 @@ class PyFilter(sdb.Command):
         except SyntaxError as err:
             raise sdb.CommandEvalSyntaxError(self.name, err)
 
-    def _init_argparse(self, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("expr", nargs=argparse.REMAINDER)
-        self.parser = parser
-
-    def call(self, objs: Iterable[drgn.Object]) -> Iterable[drgn.Object]:
+    def _call(self, objs: Iterable[drgn.Object]) -> Iterable[drgn.Object]:
         # pylint: disable=eval-used
         func = lambda obj: eval(self.code, {'__builtins__': None}, {'obj': obj})
         try:

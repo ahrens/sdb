@@ -22,7 +22,6 @@ from typing import Iterable
 
 import drgn
 import sdb
-from sdb.commands.cast import Cast
 from sdb.commands.spl.spl_list import SPLList
 
 
@@ -31,16 +30,20 @@ class ZfsDbgmsg(sdb.Locator, sdb.PrettyPrinter):
     input_type = "zfs_dbgmsg_t *"
     output_type = "zfs_dbgmsg_t *"
 
-    def _init_argparse(self, parser: argparse.ArgumentParser) -> None:
+    @classmethod
+    def _init_parser(cls, name: str) -> argparse.ArgumentParser:
+        parser = super()._init_parser(name)
         parser.add_argument('--verbose', '-v', action='count', default=0)
+        return parser
 
     # obj is a zfs_dbgmsg_t*
     @staticmethod
-    def print_msg(obj: drgn.Object, timestamp: bool = False,
-                  addr: bool = False) -> None:
-        if addr:
-            print("{} ".format(hex(obj)), end="")  # type: ignore
-        if timestamp:
+    def print_msg(obj: drgn.Object,
+                  print_timestamp: bool = False,
+                  print_address: bool = False) -> None:
+        if print_address:
+            print("{} ".format(hex(obj)), end="")
+        if print_timestamp:
             timestamp = datetime.datetime.fromtimestamp(int(obj.zdm_timestamp))
             print("{}: ".format(timestamp.strftime("%Y-%m-%dT%H:%M:%S")),
                   end="")
@@ -53,12 +56,8 @@ class ZfsDbgmsg(sdb.Locator, sdb.PrettyPrinter):
                                 self.args.verbose >= 2)
 
     def no_input(self) -> Iterable[drgn.Object]:
-        proc_list = self.prog["zfs_dbgmsgs"].pl_list
+        proc_list = sdb.get_object("zfs_dbgmsgs").pl_list
         list_addr = proc_list.address_of_()
 
-        # pylint: disable=C0330
-        for obj in sdb.execute_pipeline(
-                self.prog, [list_addr],
-            [SPLList(self.prog),
-             Cast(self.prog, "zfs_dbgmsg_t *")]):
-            yield obj
+        yield from sdb.execute_pipeline(
+            [list_addr], [SPLList(), sdb.Cast(["zfs_dbgmsg_t *"])])

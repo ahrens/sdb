@@ -22,6 +22,8 @@ import argparse
 import os
 import sys
 
+from typing import List
+
 import drgn
 import sdb
 from sdb.internal.repl import REPL
@@ -66,7 +68,7 @@ def parse_arguments() -> argparse.Namespace:
         "-s",
         "--symbol-search",
         metavar="PATH",
-        type=str,
+        default=[],
         action="append",
         help="load debug info and symbols from the given directory or file;" +
         " this may option may be given more than once",
@@ -120,10 +122,11 @@ def parse_arguments() -> argparse.Namespace:
     #
     if args.object and not args.core:
         parser.error("raw object file target is not supported yet")
+
     return args
 
 
-def load_debug_info(prog: drgn.Program, dpaths: [str]) -> None:
+def load_debug_info(prog: drgn.Program, dpaths: List[str]) -> None:
     """
     Iterates over all the paths provided (`dpaths`) and attempts
     to load any debug information it finds. If the path provided
@@ -151,7 +154,11 @@ def setup_target(args: argparse.Namespace) -> drgn.Program:
     """
     prog = drgn.Program()
     if args.core:
-        prog.set_core_dump(args.core)
+        try:
+            prog.set_core_dump(args.core)
+        except FileNotFoundError:
+            print(f"sdb: no such file: '{args.core}'")
+            sys.exit(2)
 
         #
         # This is currently a short-coming of drgn. Whenever we
@@ -159,7 +166,7 @@ def setup_target(args: argparse.Namespace) -> drgn.Program:
         # or userland binary using the non-default debug info
         # load API.
         #
-        args.symbol_search.insert(0, args.object)
+        args.symbol_search = [args.object] + args.symbol_search
     elif args.pid:
         prog.set_pid(args.pid)
     else:
@@ -208,7 +215,8 @@ def main() -> None:
         print("sdb: " + str(err))
         return
 
-    repl = REPL(prog, sdb.all_commands)
+    repl = REPL(prog, list(sdb.get_registered_commands().keys()))
+    repl.enable_history(os.getenv('SDB_HISTORY_FILE', '~/.sdb_history'))
     if args.eval:
         exit_code = repl.eval_cmd(args.eval)
         sys.exit(exit_code)

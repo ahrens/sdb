@@ -24,7 +24,8 @@ import sdb
 from sdb.commands.zfs.internal import (
     METASLAB_ACTIVE_MASK, METASLAB_WEIGHT_CLAIM, METASLAB_WEIGHT_PRIMARY,
     METASLAB_WEIGHT_SECONDARY, METASLAB_WEIGHT_TYPE, WEIGHT_GET_COUNT,
-    WEIGHT_GET_INDEX, WEIGHT_IS_SPACEBASED, nicenum, print_histogram)
+    WEIGHT_GET_INDEX, WEIGHT_IS_SPACEBASED, BTREE_LEAF_SIZE, nicenum)
+from sdb.commands.zfs.histograms import ZFSHistogram
 
 
 class Metaslab(sdb.Locator, sdb.PrettyPrinter):
@@ -32,7 +33,9 @@ class Metaslab(sdb.Locator, sdb.PrettyPrinter):
     input_type = "metaslab_t *"
     output_type = "metaslab_t *"
 
-    def _init_argparse(self, parser: argparse.ArgumentParser) -> None:
+    @classmethod
+    def _init_parser(cls, name: str) -> argparse.ArgumentParser:
+        parser = super()._init_parser(name)
         parser.add_argument(
             "-H",
             "--histogram",
@@ -48,9 +51,11 @@ class Metaslab(sdb.Locator, sdb.PrettyPrinter):
                             help="weight flag")
 
         parser.add_argument("metaslab_ids", nargs="*", type=int)
+        return parser
 
     @staticmethod
-    def metaslab_weight_print(msp, print_header, indent):
+    def metaslab_weight_print(msp: drgn.Object, print_header: bool,
+                              indent: int) -> None:
         if print_header:
             print(
                 "".ljust(indent),
@@ -111,7 +116,8 @@ class Metaslab(sdb.Locator, sdb.PrettyPrinter):
             print("", (count + " x " + size).rjust(12))
 
     @staticmethod
-    def print_metaslab(prog: drgn.Program, msp, print_header, indent):
+    def print_metaslab(msp: drgn.Object, print_header: bool,
+                       indent: int) -> None:
         spacemap = msp.ms_sm
 
         if print_header:
@@ -127,17 +133,17 @@ class Metaslab(sdb.Locator, sdb.PrettyPrinter):
             print("".ljust(indent), "-" * 65)
 
         free = msp.ms_size
-        if spacemap != drgn.NULL(prog, spacemap.type_):
+        if spacemap != sdb.get_typed_null(spacemap.type_):
             free -= spacemap.sm_phys.smp_alloc
 
         ufrees = msp.ms_unflushed_frees.rt_space
         uallocs = msp.ms_unflushed_allocs.rt_space
         free = free + ufrees - uallocs
 
-        uchanges_free_mem = msp.ms_unflushed_frees.rt_root.avl_numnodes
-        uchanges_free_mem *= prog.type("range_seg_t").type.size
-        uchanges_alloc_mem = msp.ms_unflushed_allocs.rt_root.avl_numnodes
-        uchanges_alloc_mem *= prog.type("range_seg_t").type.size
+        uchanges_free_mem = msp.ms_unflushed_frees.rt_root.bt_num_nodes
+        uchanges_free_mem *= BTREE_LEAF_SIZE
+        uchanges_alloc_mem = msp.ms_unflushed_allocs.rt_root.bt_num_nodes
+        uchanges_alloc_mem *= BTREE_LEAF_SIZE
         uchanges_mem = uchanges_free_mem + uchanges_alloc_mem
 
         print(
@@ -151,19 +157,25 @@ class Metaslab(sdb.Locator, sdb.PrettyPrinter):
         if msp.ms_fragmentation == -1:
             print("-".rjust(6), end="")
         else:
-            print((str(msp.ms_fragmentation) + "%").rjust(6), end="")
+            print((str(int(msp.ms_fragmentation)) + "%").rjust(6), end="")
         print(nicenum(uchanges_mem).rjust(9))
 
-    def pretty_print(self, metaslabs, indent=0):
+    def pretty_print(self,
+                     metaslabs: Iterable[drgn.Object],
+                     indent: int = 0) -> None:
         first_time = True
         for msp in metaslabs:
-            if not self.args.histogram and not self.args.weight:
-                Metaslab.print_metaslab(self.prog, msp, first_time, indent)
+            if not self.args.weight:
+                Metaslab.print_metaslab(msp, first_time, indent)
             if self.args.histogram:
                 spacemap = msp.ms_sm
-                if spacemap != drgn.NULL(self.prog, spacemap.type_):
+                if spacemap != sdb.get_typed_null(spacemap.type_):
                     histogram = spacemap.sm_phys.smp_histogram
-                    print_histogram(histogram, 32, spacemap.sm_shift)
+                    ZFSHistogram.print_histogram(histogram,
+                                                 int(spacemap.sm_shift), indent)
+                    ZFSHistogram.print_histogram_median(histogram,
+                                                        int(spacemap.sm_shift),
+                                                        indent)
             if self.args.weight:
                 Metaslab.metaslab_weight_print(msp, first_time, indent)
             first_time = False
@@ -174,11 +186,12 @@ class Metaslab(sdb.Locator, sdb.PrettyPrinter):
             # yield the requested metaslabs
             for i in self.args.metaslab_ids:
                 if i >= vdev.vdev_ms_count:
-                    raise TypeError(
-                        "metaslab id {} not valid; there are only {} metaslabs in vdev id {}"
-                        .format(i, vdev.vdev_ms_count, vdev.vdev_id))
+                    raise sdb.CommandError(
+                        self.name, "metaslab id {} not valid; "
+                        "there are only {} metaslabs in vdev id {}".format(
+                            i, int(vdev.vdev_ms_count), int(vdev.vdev_id)))
                 yield vdev.vdev_ms[i]
         else:
-            for i in range(0, int(vdev.vdev_ms_count)):
+            for i in range(int(vdev.vdev_ms_count)):
                 msp = vdev.vdev_ms[i]
                 yield msp

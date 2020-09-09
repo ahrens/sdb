@@ -24,20 +24,25 @@ import sdb
 
 
 class Echo(sdb.Command):
-    # pylint: disable=too-few-public-methods
+    """
+    Creates an object of type (void *) from the given address or addresses
+    """
 
     names = ["echo", "cc"]
 
-    def _init_argparse(self, parser: argparse.ArgumentParser) -> None:
+    @classmethod
+    def _init_parser(cls, name: str) -> argparse.ArgumentParser:
+        parser = super()._init_parser(name)
         parser.add_argument("addrs", nargs="*", metavar="<address>")
+        return parser
 
-    def call(self, objs: Iterable[drgn.Object]) -> Iterable[drgn.Object]:
+    def _call(self, objs: Iterable[drgn.Object]) -> Iterable[drgn.Object]:
         for obj in objs:
             yield obj
 
         for addr in self.args.addrs:
             try:
                 value_ = int(addr, 0)
-            except ValueError:
-                raise sdb.CommandInvalidInputError(self.name, addr)
-            yield drgn.Object(self.prog, "void *", value=value_)
+            except ValueError as err:
+                raise sdb.CommandInvalidInputError(self.name, addr) from err
+            yield sdb.create_object("void *", value_)

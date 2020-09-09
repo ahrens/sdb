@@ -17,29 +17,59 @@
 # pylint: disable=missing-docstring
 
 import argparse
-from typing import Iterable
+from typing import Iterable, List, Optional
 
 import drgn
 import sdb
 
 
-class Filter(sdb.Command):
-    # pylint: disable=too-few-public-methods
+class Filter(sdb.SingleInputCommand):
+    """
+    Return objects matching expression
+
+    EXAMPLES
+        Print addresses greater than or equal to 4
+
+            sdb> addr 0 1 2 3 4 5 6 | filter "obj >= 4"
+            (void *)0x4
+            (void *)0x5
+            (void *)0x6
+
+        Find the SPA object of the ZFS pool named "jax" and print its 'spa_name'
+
+            sdb> spa | filter 'obj.spa_name == "jax"' | member spa_name
+            (char [256])"jax"
+
+        Print the number of level 3 log statements in the kernel log buffer
+
+            sdb> dmesg | filter 'obj.level == 3' | count
+            (unsigned long long)24
+    """
     # pylint: disable=eval-used
 
     names = ["filter"]
 
-    def __init__(self, prog: drgn.Program, args: str = "",
+    @classmethod
+    def _init_parser(cls, name: str) -> argparse.ArgumentParser:
+        parser = super()._init_parser(name)
+        parser.add_argument("expr", nargs=1)
+        return parser
+
+    @staticmethod
+    def _parse_expression(input_expr: str) -> List[str]:
+        pass
+
+    def __init__(self,
+                 args: Optional[List[str]] = None,
                  name: str = "_") -> None:
-        super().__init__(prog, args, name)
-        if not self.args.expr:
-            self.parser.error("the following arguments are required: expr")
+        super().__init__(args, name)
+        self.expr = self.args.expr[0].split()
 
         index = None
         operators = ["==", "!=", ">", "<", ">=", "<="]
         for operator in operators:
             try:
-                index = self.args.expr.index(operator)
+                index = self.expr.index(operator)
                 # Use the first comparison operator we find.
                 break
             except ValueError:
@@ -58,7 +88,7 @@ class Filter(sdb.Command):
             raise sdb.CommandInvalidInputError(
                 self.name, "left hand side of expression is missing")
 
-        if index == len(self.args.expr) - 1:
+        if index == len(self.expr) - 1:
             # If the index is found to be at the very end of the list,
             # this means there's no right hand side of the comparison to
             # compare the left hand side to. This is an error.
@@ -66,50 +96,44 @@ class Filter(sdb.Command):
                 self.name, "right hand side of expression is missing")
 
         try:
-            self.lhs_code = compile(" ".join(self.args.expr[:index]),
-                                    "<string>", "eval")
-            self.rhs_code = compile(" ".join(self.args.expr[index + 1:]),
-                                    "<string>", "eval")
+            self.lhs_code = compile(" ".join(self.expr[:index]), "<string>",
+                                    "eval")
+            self.rhs_code = compile(" ".join(self.expr[index + 1:]), "<string>",
+                                    "eval")
         except SyntaxError as err:
             raise sdb.CommandEvalSyntaxError(self.name, err)
 
-        self.compare = self.args.expr[index]
+        self.compare = self.expr[index]
 
-    def _init_argparse(self, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("expr", nargs=argparse.REMAINDER)
-        self.parser = parser
-
-    def call(self, objs: Iterable[drgn.Object]) -> Iterable[drgn.Object]:
+    def _call_one(self, obj: drgn.Object) -> Iterable[drgn.Object]:
         try:
-            for obj in objs:
-                lhs = eval(self.lhs_code, {'__builtins__': None}, {'obj': obj})
-                rhs = eval(self.rhs_code, {'__builtins__': None}, {'obj': obj})
+            lhs = eval(self.lhs_code, {'__builtins__': None}, {'obj': obj})
+            rhs = eval(self.rhs_code, {'__builtins__': None}, {'obj': obj})
 
-                if not isinstance(lhs, drgn.Object):
-                    raise sdb.CommandInvalidInputError(
-                        self.name,
-                        "left hand side has unsupported type ({})".format(
-                            type(lhs).__name__))
+            if not isinstance(lhs, drgn.Object):
+                raise sdb.CommandInvalidInputError(
+                    self.name,
+                    "left hand side has unsupported type ({})".format(
+                        type(lhs).__name__))
 
-                if isinstance(rhs, str):
-                    lhs = lhs.string_().decode("utf-8")
-                elif isinstance(rhs, int):
-                    rhs = drgn.Object(self.prog, type=lhs.type_, value=rhs)
-                elif isinstance(rhs, bool):
-                    pass
-                elif isinstance(rhs, drgn.Object):
-                    pass
-                else:
-                    raise sdb.CommandInvalidInputError(
-                        self.name,
-                        "right hand side has unsupported type ({})".format(
-                            type(rhs).__name__))
+            if isinstance(rhs, str):
+                lhs = lhs.string_().decode("utf-8")
+            elif isinstance(rhs, int):
+                rhs = sdb.create_object(lhs.type_, rhs)
+            elif isinstance(rhs, bool):
+                pass
+            elif isinstance(rhs, drgn.Object):
+                pass
+            else:
+                raise sdb.CommandInvalidInputError(
+                    self.name,
+                    "right hand side has unsupported type ({})".format(
+                        type(rhs).__name__))
 
-                if eval("lhs {} rhs".format(self.compare),
-                        {'__builtins__': None}, {
-                            'lhs': lhs,
-                            'rhs': rhs
-                        }):
-                    yield obj
+            if eval("lhs {} rhs".format(self.compare), {'__builtins__': None}, {
+                    'lhs': lhs,
+                    'rhs': rhs
+            }):
+                yield obj
         except (AttributeError, TypeError, ValueError) as err:
             raise sdb.CommandError(self.name, str(err))

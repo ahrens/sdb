@@ -18,13 +18,14 @@
 
 import argparse
 import textwrap
-from typing import Any, Callable, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 import drgn
 
 import sdb
 from sdb.commands.internal.fmt import size_nicenum
 from sdb.commands.internal.table import Table
+from sdb.commands.linux.internal import slub_helpers as slub
 from sdb.commands.spl.internal import kmem_helpers as kmem
 
 
@@ -35,7 +36,9 @@ class SplKmemCaches(sdb.Locator, sdb.PrettyPrinter):
     input_type = "spl_kmem_cache_t *"
     output_type = "spl_kmem_cache_t *"
 
-    def _init_argparse(self, parser: argparse.ArgumentParser) -> None:
+    @classmethod
+    def _init_parser(cls, name: str) -> argparse.ArgumentParser:
+        parser = super()._init_parser(name)
         parser.add_argument(
             '-H',
             action='store_false',
@@ -81,6 +84,7 @@ class SplKmemCaches(sdb.Locator, sdb.PrettyPrinter):
              "the first field specified in the set."),
             width=80,
             replace_whitespace=False)
+        return parser
 
     def no_input(self) -> Iterable[drgn.Object]:
         #
@@ -94,12 +98,12 @@ class SplKmemCaches(sdb.Locator, sdb.PrettyPrinter):
                 raise sdb.CommandInvalidInputError(
                     self.name, f"'{self.args.s}' is not a valid field")
             yield from sorted(
-                kmem.list_for_each_spl_kmem_cache(self.prog),
+                kmem.for_each_spl_kmem_cache(),
                 key=SplKmemCaches.FIELDS[self.args.s],
-                reverse=(self.args.s not in
-                         SplKmemCaches.DEFAULT_INCREASING_ORDER_FIELDS))
+                reverse=(self.args.s
+                         not in SplKmemCaches.DEFAULT_INCREASING_ORDER_FIELDS))
         else:
-            yield from kmem.list_for_each_spl_kmem_cache(self.prog)
+            yield from kmem.for_each_spl_kmem_cache()
 
     FIELDS = {
         "address": lambda obj: hex(obj.value_()),
@@ -141,18 +145,9 @@ class SplKmemCaches(sdb.Locator, sdb.PrettyPrinter):
     #
     DEFAULT_INCREASING_ORDER_FIELDS = ["name", "address"]
 
-    def __pp_parse_args(self
-                       ) -> (str, List[str], Dict[str, Callable[[Any], str]]):
+    def __pp_parse_args(self) -> Tuple[str, List[str], Dict[str, Any]]:
         fields = SplKmemCaches.DEFAULT_FIELDS
         if self.args.o:
-            #
-            # HACK: Until we have a proper lexer for SDB we can
-            #       only pass the comma-separated list as a
-            #       string (e.g. quoted). Until this is fixed
-            #       we make sure to unquote such strings.
-            #
-            if self.args.o[0] == '"' and self.args.o[-1] == '"':
-                self.args.o = self.args.o[1:-1]
             fields = self.args.o.split(",")
         elif self.args.v:
             fields = list(SplKmemCaches.FIELDS.keys())
@@ -201,3 +196,35 @@ class SplKmemCaches(sdb.Locator, sdb.PrettyPrinter):
             table.add_row(row_dict[sort_field], row_dict)
         table.print_(print_headers=self.args.H,
                      reverse_sort=(sort_field not in ["name", "address"]))
+
+
+class SplKmemCacheWalker(sdb.Walker):
+    """
+    Walk through all allocated entries of an spl_kmem_cache.
+
+    DESCRIPTION
+        Walk through all allocated entries of an spl_kmem_cache. If
+        the cache is backed by a SLUB cache then iteration will be
+        delegated to the appropriate walker (keep in mind that in
+        this case not all objects may be part of the actual SPL
+        cache due to the SLUB allocator in Linux merging objects).
+
+    EXAMPLES
+        Print all the objects in the ddt_cache:
+
+            sdb> spl_kmem_caches | filter obj.skc_name == "ddt_cache" | spl_cache
+            (void *)0xffffa08937e80040
+            (void *)0xffffa08937e86180
+            (void *)0xffffa08937e8c2c0
+            (void *)0xffffa08937e92400
+            ...
+    """
+
+    names = ["spl_cache"]
+    input_type = "spl_kmem_cache_t *"
+
+    def walk(self, obj: drgn.Object) -> Iterable[drgn.Object]:
+        if kmem.backed_by_linux_cache(obj):
+            yield from slub.for_each_object_in_cache(obj.skc_linux_cache)
+        else:
+            yield from kmem.for_each_object_in_spl_cache(obj)

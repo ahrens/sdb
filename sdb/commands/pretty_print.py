@@ -23,35 +23,32 @@ import sdb
 
 
 class PrettyPrint(sdb.Command):
-    # pylint: disable=too-few-public-methods
 
     names = ["pretty_print", "pp"]
 
-    def call(self, objs: Iterable[drgn.Object]) -> None:  # type: ignore
-        baked = [(self.prog.type(type_), class_)
-                 for type_, class_ in sdb.PrettyPrinter.all_printers.items()]
-        has_input = False
-        for i in objs:
-            has_input = True
+    def _call(self, objs: Iterable[drgn.Object]) -> None:
+        baked = {
+            sdb.type_canonicalize_name(type_): class_
+            for type_, class_ in sdb.PrettyPrinter.all_printers.items()
+        }
 
-            try:
-                for type_, class_ in baked:
-                    if i.type_ == type_ and hasattr(class_, "pretty_print"):
-                        class_(self.prog).pretty_print([i])
-                        raise StopIteration
-            except StopIteration:
-                continue
+        handling_class = None
+        first_obj_type, objs = sdb.get_first_type(objs)
+        if first_obj_type is not None:
+            first_obj_type_name = sdb.type_canonical_name(first_obj_type)
+            if first_obj_type_name in baked:
+                handling_class = baked[first_obj_type_name]
 
-            # error
-            raise TypeError(
-                'command "{}" does not handle input of type {}'.format(
-                    self.names, i.type_))
-        # If we got no input and we're the last thing in the pipeline, we're
-        # probably the first thing in the pipeline. Print out the available
-        # pretty-printers.
-        if not has_input and self.islast:
-            print("The following types have pretty-printers:")
-            print("\t%-20s %-20s" % ("PRINTER", "TYPE"))
-            for type_, class_ in baked:
-                if hasattr(class_, "pretty_print"):
-                    print("\t%-20s %-20s" % (class_(self.prog).names, type_))
+        if handling_class is None:
+            if first_obj_type is not None:
+                msg = 'could not find pretty-printer for type {}\n'.format(
+                    first_obj_type)
+            else:
+                msg = 'could not find pretty-printer\n'
+            msg += "The following types have pretty-printers:\n"
+            msg += f"\t{'PRINTER':<20s} {'TYPE':<20s}\n"
+            for type_name, class_ in sdb.PrettyPrinter.all_printers.items():
+                msg += f"\t{class_.names[0]:<20s} {type_name:<20s}\n"
+            raise sdb.CommandError(self.name, msg)
+
+        handling_class().pretty_print(objs)

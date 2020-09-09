@@ -16,7 +16,7 @@
 
 # pylint: disable=missing-docstring
 
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 
 class Table:
@@ -27,24 +27,31 @@ class Table:
 
     __slots__ = "fields", "rjustfields", "formatters", "maxfieldlen", "lines"
 
-    def __init__(self,
-                 fields: List[str],
-                 rjustfields: Optional[Set[str]] = None,
-                 formatters: Optional[Dict[str, Callable[[Any], str]]] = None
-                ) -> None:
+    def __init__(
+            self,
+            fields: List[str],
+            rjustfields: Optional[Set[str]] = None,
+            formatters: Optional[Dict[str, Callable[[Any],
+                                                    str]]] = None) -> None:
         self.fields = fields
 
         if rjustfields is None:
-            self.rjustfields = ()
+            self.rjustfields: Set[str] = set()
         else:
             self.rjustfields = rjustfields
 
-        self.formatters = {
-            field: (formatters[field] if field in formatters.keys() else str)
-            for field in fields
-        }
+        if formatters is None:
+            self.formatters: Dict[str, Callable[[Any], str]] = {}
+        else:
+            to_str: Callable[[Any], str] = str
+            self.formatters = {
+                field:
+                (formatters[field] if field in formatters.keys() else to_str)
+                for field in fields
+            }
+
         self.maxfieldlen = dict.fromkeys(fields, 0)
-        self.lines = []
+        self.lines: List[Tuple[Any, List[str]]] = []
 
     def add_row(self, sortkey: Any, values: Dict[str, Any]) -> None:
         row_values = []
@@ -55,8 +62,8 @@ class Table:
         self.lines.append((sortkey, row_values))
 
     def print_(self,
-               print_headers: Optional[bool] = True,
-               reverse_sort: Optional[bool] = False) -> None:
+               print_headers: bool = True,
+               reverse_sort: bool = False) -> None:
         delimeter = "\t"
         if print_headers:
             delimeter = " "
@@ -79,13 +86,11 @@ class Table:
                 continue
 
             line_fields = []
-            for fid in range(len(self.fields)):
-                if self.fields[fid] in self.rjustfields:
+            for fid, field in enumerate(self.fields):
+                if field in self.rjustfields:
                     line_fields.append(
-                        f"{row_values[fid]:>{self.maxfieldlen[self.fields[fid]]}}"
-                    )
+                        f"{row_values[fid]:>{self.maxfieldlen[field]}}")
                 else:
                     line_fields.append(
-                        f"{row_values[fid]:<{self.maxfieldlen[self.fields[fid]]}}"
-                    )
+                        f"{row_values[fid]:<{self.maxfieldlen[field]}}")
             print(delimeter.join(line_fields))

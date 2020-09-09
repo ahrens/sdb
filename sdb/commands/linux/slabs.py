@@ -14,11 +14,16 @@
 # limitations under the License.
 #
 
+#
+# line-too-long is disabled because of the examples
+# added in slub_cache command.
+#
+# pylint: disable=line-too-long
 # pylint: disable=missing-docstring
 
 import argparse
 import textwrap
-from typing import Any, Callable, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 import drgn
 
@@ -29,14 +34,15 @@ from sdb.commands.linux.internal import slub_helpers as slub
 
 
 class Slabs(sdb.Locator, sdb.PrettyPrinter):
-    # pylint: disable=too-few-public-methods
 
     names = ["slabs"]
 
     input_type = "struct kmem_cache *"
     output_type = "struct kmem_cache *"
 
-    def _init_argparse(self, parser: argparse.ArgumentParser) -> None:
+    @classmethod
+    def _init_parser(cls, name: str) -> argparse.ArgumentParser:
+        parser = super()._init_parser(name)
         parser.add_argument(
             '-H',
             action='store_false',
@@ -82,12 +88,13 @@ class Slabs(sdb.Locator, sdb.PrettyPrinter):
              "the first field specified in the set."),
             width=80,
             replace_whitespace=False)
+        return parser
 
     def __no_input_iterator(self) -> Iterable[drgn.Object]:
-        for root_cache in slub.list_for_each_root_cache(self.prog):
+        for root_cache in slub.for_each_root_cache():
             yield root_cache
             if self.args.recursive:
-                yield from slub.list_for_each_child_cache(root_cache)
+                yield from slub.for_each_child_cache(root_cache)
 
     def no_input(self) -> Iterable[drgn.Object]:
         #
@@ -103,8 +110,8 @@ class Slabs(sdb.Locator, sdb.PrettyPrinter):
             yield from sorted(
                 self.__no_input_iterator(),
                 key=Slabs.FIELDS[self.args.s],
-                reverse=(
-                    self.args.s not in Slabs.DEFAULT_INCREASING_ORDER_FIELDS))
+                reverse=(self.args.s
+                         not in Slabs.DEFAULT_INCREASING_ORDER_FIELDS))
         else:
             yield from self.__no_input_iterator()
 
@@ -138,18 +145,9 @@ class Slabs(sdb.Locator, sdb.PrettyPrinter):
     #
     DEFAULT_INCREASING_ORDER_FIELDS = ["name", "address"]
 
-    def __pp_parse_args(self
-                       ) -> (str, List[str], Dict[str, Callable[[Any], str]]):
+    def __pp_parse_args(self) -> Tuple[str, List[str], Dict[str, Any]]:
         fields = self.DEFAULT_FIELDS
         if self.args.o:
-            #
-            # HACK: Until we have a proper lexer for SDB we can
-            #       only pass the comma-separated list as a
-            #       string (e.g. quoted). Until this is fixed
-            #       we make sure to unquote such strings.
-            #
-            if self.args.o[0] == '"' and self.args.o[-1] == '"':
-                self.args.o = self.args.o[1:-1]
             fields = self.args.o.split(",")
         elif self.args.v:
             fields = list(Slabs.FIELDS.keys())
@@ -196,3 +194,51 @@ class Slabs(sdb.Locator, sdb.PrettyPrinter):
             table.add_row(row_dict[sort_field], row_dict)
         table.print_(print_headers=self.args.H,
                      reverse_sort=(sort_field not in ["name", "address"]))
+
+
+class SlubCacheWalker(sdb.Walker):
+    """
+    Walk though all allocated entries in a slub cache.
+
+    EXAMPLES
+        Walk through all the objects in the TCP cache:
+
+            sdb> slabs | filter obj.name == "TCP" | walk
+            (void *)0xffffa08888af0000
+            (void *)0xffffa08888af0880
+            (void *)0xffffa08888af1100
+            (void *)0xffffa08888af1980
+            (void *)0xffffa08888af2200
+
+        Walk though all the ZIOs in the system and print the pool
+        that each ZIO belongs to:
+
+            sdb> slabs | filter obj.name == "zio_cache" | slub_cache | cast zio_t * | member io_spa.spa_name
+            (char [256])"data"
+            (char [256])"rpool"
+            (char [256])"rpool"
+            (char [256])"rpool"
+            (char [256])"rpool"
+            (char [256])"rpool"
+
+    NOTES
+        This command is not expected to work well for hot caches
+        in live systems. The command is implemented using the
+        lowest-common denominator functionality provided by the
+        default Linux kernel config file that most distros use
+        and thus is very inefficient on traversing the entries
+        and slabs of each cache.
+
+        Another thing to keep in mind is Linux SLUB allocator's
+        merging behavior. Some systems are tuned to merge together
+        caches whose entries are of the same size where it makes
+        sense. As a result, when using this walker the user may
+        run into entries that don't make sense given the cache's
+        name.
+    """
+
+    names = ["slub_cache"]
+    input_type = "struct kmem_cache *"
+
+    def walk(self, obj: drgn.Object) -> Iterable[drgn.Object]:
+        yield from slub.for_each_object_in_cache(obj)

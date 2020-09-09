@@ -25,14 +25,25 @@ import sdb
 
 
 class Tail(sdb.Command):
-    # pylint: disable=too-few-public-methods
+    """
+    Return the last COUNT objects passed in the pipeline
+
+    EXAMPLES
+        Print the name of the last pool
+
+            sdb> spa | tail 1 | spa_name
+            (char [256])"domain9"
+    """
 
     names = ["tail"]
 
-    def _init_argparse(self, parser: argparse.ArgumentParser) -> None:
+    @classmethod
+    def _init_parser(cls, name: str) -> argparse.ArgumentParser:
+        parser = super()._init_parser(name)
         parser.add_argument("count", nargs="?", default=10, type=int)
+        return parser
 
-    def call(self, objs: Iterable[drgn.Object]) -> Iterable[drgn.Object]:
+    def _call(self, objs: Iterable[drgn.Object]) -> Iterable[drgn.Object]:
         queue: Deque[drgn.Object] = deque(maxlen=self.args.count)
         for obj in objs:
             queue.append(obj)

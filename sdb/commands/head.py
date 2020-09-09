@@ -24,14 +24,25 @@ import sdb
 
 
 class Head(sdb.Command):
-    # pylint: disable=too-few-public-methods
+    """
+    Return the first COUNT objects passed in the pipeline
+
+    EXAMPLES
+        Print the name of the first pool
+
+            sdb> spa | head 1 | member spa_name
+            (char [256])"domain0"
+    """
 
     names = ["head"]
 
-    def _init_argparse(self, parser: argparse.ArgumentParser) -> None:
+    @classmethod
+    def _init_parser(cls, name: str) -> argparse.ArgumentParser:
+        parser = super()._init_parser(name)
         parser.add_argument("count", nargs="?", default=10, type=int)
+        return parser
 
-    def call(self, objs: Iterable[drgn.Object]) -> Iterable[drgn.Object]:
+    def _call(self, objs: Iterable[drgn.Object]) -> Iterable[drgn.Object]:
         for obj in objs:
             if self.args.count == 0:
                 break

@@ -27,10 +27,9 @@ class ARCStats(sdb.Locator, sdb.PrettyPrinter):
     input_type = "arc_stats_t *"
     output_type = "arc_stats_t *"
 
-    def print_stats(self, obj: drgn.Object) -> None:
-        names = [
-            tuple_[1] for tuple_ in self.prog.type('struct arc_stats').members
-        ]
+    @staticmethod
+    def print_stats(obj: drgn.Object) -> None:
+        names = [memb.name for memb in sdb.get_type('struct arc_stats').members]
 
         for name in names:
             print("{:32} = {}".format(name, int(obj.member_(name).value.ui64)))
@@ -40,4 +39,4 @@ class ARCStats(sdb.Locator, sdb.PrettyPrinter):
             self.print_stats(obj)
 
     def no_input(self) -> Iterable[drgn.Object]:
-        yield self.prog["arc_stats"].address_of_()
+        yield sdb.get_object("arc_stats").address_of_()

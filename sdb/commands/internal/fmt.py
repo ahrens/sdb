@@ -13,13 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-# pylint: disable=missing-docstring
+"""
+Common String and Number formatting functions.
+"""
 
 from typing import Union
 
 
 def size_nicenum(num: Union[int, float]) -> str:
+    """
+    Return `num` bytes as a human-readable string.
+    """
     num = float(num)
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if num < 1024.0:
